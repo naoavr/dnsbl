@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# instalar-dnsbl-v2.2.sh
+# instalar-dnsbl-v2.3.sh
 # Instala TUDO numa só VM/container: o site de gestão (backoffice) e o
 # servidor DNS da lista (rbldnsd), ambos no mesmo nome, ex.: dnsbl.3rhost.pt
 #
@@ -19,8 +19,8 @@
 # Sistemas: Debian 11+, Ubuntu 20.04+, AlmaLinux/Rocky/RHEL 8 e 9
 #
 # Uso (como root):
-#   bash instalar-dnsbl-v2.2.sh              instalação (pergunta os dados)
-#   bash instalar-dnsbl-v2.2.sh --remover    remove serviços e configuração
+#   bash instalar-dnsbl-v2.3.sh              instalação (pergunta os dados)
+#   bash instalar-dnsbl-v2.3.sh --remover    remove serviços e configuração
 #
 # Pode ser executado várias vezes. Os dados e a configuração são sempre mantidos;
 # se a plataforma incluída for mais recente do que a instalada, o código é atualizado
@@ -28,7 +28,7 @@
 # =============================================================================
 set -u
 
-VERSAO="2.2"
+VERSAO="2.3"
 DOMINIO=""
 NS_NOME=""
 IP_PUBLICO=""
@@ -347,7 +347,7 @@ cat > "$AGENTE" << 'AGENTE_EOF'
 #!/usr/bin/env php
 <?php
 /*
- * DNSBL — agente SSL v1.0
+ * DNSBL — agente SSL v1.1
  * Instalado em /usr/local/lib/dnsbl/ssl-agente.php (root, 0700) pelo instalador do servidor.
  *
  * Executa, como root, as operações pedidas pelo backoffice:
@@ -365,7 +365,7 @@ cat > "$AGENTE" << 'AGENTE_EOF'
  */
 declare(strict_types=1);
 
-const VERSAO_AGENTE = '1.0';
+const VERSAO_AGENTE = '1.1';
 const INSTALACAO    = '/etc/dnsbl-instalacao.conf';
 const CONF_SSL      = '/etc/dnsbl/ssl.json';
 const DIR_PROPRIO   = '/etc/dnsbl/ssl';
@@ -832,8 +832,19 @@ function op_remover(array $I): string
 
 // ---------------------------------------------------------------- principal
 
+$arg  = $argv[1] ?? '';
 $lock = fopen('/run/dnsbl-ssl.lock', 'c');
-if (!$lock || !flock($lock, LOCK_EX)) {
+if (!$lock) {
+    exit(1);
+}
+if ($arg === '--renovado') {
+    // Chamado pelo certbot. Se o próprio agente está a correr (foi ele que chamou o
+    // certbot), não esperar pelo bloqueio: o agente aplica o nginx e publica o estado
+    // quando o certbot terminar. Esperar aqui bloqueava os dois para sempre.
+    if (!flock($lock, LOCK_EX | LOCK_NB)) {
+        exit(0);
+    }
+} elseif (!flock($lock, LOCK_EX)) {
     exit(1);
 }
 
@@ -852,7 +863,6 @@ if (!is_file(CONF_SSL)) {
         : ['modo' => 'nenhum', 'forcar_https' => false, 'email' => '']);
 }
 
-$arg = $argv[1] ?? '';
 try {
     if ($arg === '--nginx') {
         aplicar_nginx($I, conf_ssl());
