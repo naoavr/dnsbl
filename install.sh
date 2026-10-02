@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# instalar-dnsbl-v2.0.sh
+# instalar-dnsbl-v2.1.sh
 # Instala TUDO numa só VM/container: o site de gestão (backoffice) e o
 # servidor DNS da lista (rbldnsd), ambos no mesmo nome, ex.: dnsbl.3rhost.pt
 #
@@ -19,16 +19,16 @@
 # Sistemas: Debian 11+, Ubuntu 20.04+, AlmaLinux/Rocky/RHEL 8 e 9
 #
 # Uso (como root):
-#   bash instalar-dnsbl-v2.0.sh              instalação (pergunta os dados)
-#   bash instalar-dnsbl-v2.0.sh --ssl        só o certificado SSL (depois da delegação)
-#   bash instalar-dnsbl-v2.0.sh --remover    remove serviços e configuração
+#   bash instalar-dnsbl-v2.1.sh              instalação (pergunta os dados)
+#   bash instalar-dnsbl-v2.1.sh --ssl        só o certificado SSL (depois da delegação)
+#   bash instalar-dnsbl-v2.1.sh --remover    remove serviços e configuração
 #
 # Pode ser executado várias vezes. Se a plataforma já estiver instalada,
 # o código e os dados são mantidos (as atualizações fazem-se no backoffice).
 # =============================================================================
 set -u
 
-VERSAO="2.0"
+VERSAO="2.1"
 DOMINIO=""
 NS_NOME=""
 IP_PUBLICO=""
@@ -202,8 +202,17 @@ ok "Site e lista em $DOMINIO; DNS em ${IP_ESCUTA}:53 (público ${IP_PUBLICO})"
 
 # ---------- portas ----------
 passo "A verificar as portas"
-if ss -H -lnup 2>/dev/null | awk '{print $5}' | grep -Eq "^(${IP_ESCUTA//./\\.}|0\.0\.0\.0|\*):53$"; then
-    systemctl is-active --quiet "$SERVICO_DNS" || { ss -H -lnup | grep ':53 ' | sed 's/^/      /'; erro "A porta 53 em $IP_ESCUTA já está ocupada por outro serviço."; }
+porta53_ocupada() {
+    # Coluna 4 do «ss -H -lnu»: endereço local (ex.: 91.209.16.23:53, 0.0.0.0:53, *:53)
+    ss -H -lnu 2>/dev/null | awk '{print $4}' | grep -Eq "^(${IP_ESCUTA//./\\.}|0\.0\.0\.0|\*|\[::\]):53$"
+}
+mostrar_porta53() {
+    echo "      O que está a usar a porta 53:"
+    ss -H -lnup 2>/dev/null | awk '$4 ~ /:53$/' | sed 's/^/        /'
+}
+if porta53_ocupada && ! systemctl is-active --quiet "$SERVICO_DNS"; then
+    mostrar_porta53
+    erro "A porta 53 em $IP_ESCUTA já está ocupada por outro serviço (ver acima). Desative-o e volte a correr o script."
 fi
 if ss -H -lntp 2>/dev/null | awk '{print $4}' | grep -Eq ':(80)$'; then
     ss -H -lntp | grep -q nginx || { ss -H -lntp | grep -E ':80 ' | sed 's/^/      /'; erro "A porta 80 está ocupada por outro servidor web (ver acima)."; }
@@ -407,6 +416,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
+systemctl stop "$SERVICO_DNS" >/dev/null 2>&1
+sleep 1
+if porta53_ocupada; then
+    mostrar_porta53
+    erro "A porta 53 em $IP_ESCUTA foi ocupada por outro serviço (ver acima). Desative-o (systemctl disable --now NOME) e volte a correr o script."
+fi
 systemctl enable "$SERVICO_DNS" >/dev/null 2>&1
 systemctl restart "$SERVICO_DNS"
 sleep 2
